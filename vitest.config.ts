@@ -12,6 +12,9 @@ export default defineConfig({
     environment: "node",
     globals: true,
     include: ["tests/**/*.spec.ts"],
+    coverage: {
+      provider: "istanbul"
+    },
     server: {
       deps: {
         inline: ["graphql", "@apollo/client", "@graphql-tools/schema", "graphql-tag"]
