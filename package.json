@@ -1,0 +1,70 @@
+{
+  "name": "apollo-link-custom-scalars",
+  "version": "0.1.0",
+  "description": "Custom Apollo Link for parsing and serializing custom scalars with Apollo Client v4",
+  "author": "ENIAQ",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsdown",
+    "clean": "rm -rf dist coverage",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --coverage",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@oxc-project/runtime": "^0.61.2"
+  },
+  "peerDependencies": {
+    "@apollo/client": "^4.0.0",
+    "graphql": "^16.0.0"
+  },
+  "devDependencies": {
+    "@apollo/client": "^4.0.0",
+    "@eslint/js": "^9.6.0",
+    "@graphql-tools/schema": "^10.0.0",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
+    "eslint": "^9.6.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.2.0",
+    "graphql": "^16.8.1",
+    "prettier": "^3.3.2",
+    "tsdown": "^0.6.0",
+    "typescript": "^5.5.4",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^2.0.5"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "overrides": {
+    "rolldown": "1.0.0-beta.7"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eniaq/apollo-link-custom-scalars"
+  },
+  "bugs": {
+    "url": "https://github.com/eniaq/apollo-link-custom-scalars/issues"
+  },
+  "homepage": "https://github.com/eniaq/apollo-link-custom-scalars"
+}

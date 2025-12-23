@@ -1,0 +1,5 @@
+export { isNone } from "./lib/is-none";
+export { ScalarApolloLink, withScalars } from "./lib/link";
+export { mapIfArray } from "./lib/map-if-array";
+export type { FunctionsMap, ParsingFunctionsObject } from "./types/functions-map";
+export type { NullFunctions } from "./types/null-functions";

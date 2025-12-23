@@ -1,0 +1,502 @@
+import { ApolloLink, DocumentNode, execute, gql } from "@apollo/client";
+import { makeExecutableSchema } from "@graphql-tools/schema";
+import { graphql, GraphQLScalarType, Kind } from "graphql";
+import { withScalars } from "../src/index";
+import { isNumber, isString, observableOf, nextValue, dummyClient } from "./test-utils";
+
+describe("scalar returned directly from first level queries", () => {
+  const typeDefs = gql`
+    type Query {
+      object: MyObject
+      sure: MyObject!
+      list: [MyObject!]
+      listMaybe: [MyObject]
+      sureList: [MyObject]!
+      reallySureList: [MyObject!]!
+    }
+
+    type MyObject {
+      day: Date
+      morning: StartOfDay!
+      days: [Date]!
+      sureDays: [Date!]!
+      mornings: [StartOfDay!]!
+      empty: [Date]!
+      nested: MyObject
+    }
+
+    "represents a Date with time"
+    scalar Date
+
+    "represents a Date at the beginning of the UTC day"
+    scalar StartOfDay
+  `;
+
+  class CustomDate {
+    public readonly internalDate: Date;
+    constructor(x: string | number | Date) {
+      this.internalDate = x instanceof Date ? x : new Date(x);
+    }
+
+    public toISOString(): string {
+      return this.internalDate.toISOString();
+    }
+
+    public getNewDate(): Date {
+      return new Date(this.internalDate);
+    }
+  }
+
+  class MainDate {
+    public readonly internalDate: Date;
+    constructor(x: string | number | Date) {
+      this.internalDate = x instanceof Date ? x : new Date(x);
+    }
+
+    public toISOString(): string {
+      return this.internalDate.toISOString();
+    }
+
+    public getNewDate(): Date {
+      return new Date(this.internalDate);
+    }
+  }
+
+  function isSerializableDate(x: unknown): x is { toISOString: () => string } {
+    return x instanceof Date || x instanceof CustomDate || x instanceof MainDate;
+  }
+
+  const rawDay = "2018-02-03T12:13:14.000Z";
+  const rawDay2 = "2019-02-03T12:13:14.000Z";
+  const rawMorning = "2018-02-03T00:00:00.000Z";
+  const rawMorning2 = "2019-02-03T00:00:00.000Z";
+
+  const parsedDay = new Date(rawDay);
+  const parsedDay2 = new Date(rawDay2);
+  const parsedMorning = new Date(rawMorning);
+  const parsedMorning2 = new Date(rawMorning2);
+  const parsedMorningCustom = new CustomDate(parsedMorning);
+  const parsedMorningCustom2 = new CustomDate(parsedMorning2);
+
+  const resolvers = {
+    Query: {
+      object: () => ({}),
+      sure: () => ({ nested: {} }),
+      list: () => [{}],
+      listMaybe: () => [{}],
+      sureList: () => [{}],
+      reallySureList: () => [{}]
+    },
+    MyObject: {
+      day: () => parsedDay,
+      morning: () => parsedMorning,
+      days: () => [parsedDay, parsedDay2],
+      sureDays: () => [parsedDay, parsedDay2],
+      mornings: () => [parsedMorning, parsedMorning2],
+      empty: () => []
+    },
+    Date: new GraphQLScalarType<Date | null, string | null>({
+      name: "Date",
+      serialize: (parsed) => (isSerializableDate(parsed) ? parsed.toISOString() : null),
+      parseValue: (raw) => {
+        if (!raw) return null;
+        if (raw instanceof Date) return raw;
+        if (isString(raw) || isNumber(raw)) {
+          return new Date(raw);
+        }
+        throw new Error(`'invalid value to parse (no date, no string, no number): ${raw}'`);
+      },
+      parseLiteral(ast) {
+        if (ast.kind === Kind.STRING || ast.kind === Kind.INT) {
+          return new Date(ast.value);
+        }
+        return null;
+      }
+    }),
+    StartOfDay: new GraphQLScalarType<Date | null, string | null>({
+      name: "StartOfDay",
+      serialize: (parsed) => (isSerializableDate(parsed) ? parsed.toISOString() : null),
+      parseValue: (raw) => {
+        if (!raw) return null;
+        if (raw instanceof Date) return raw;
+        if (isString(raw) || isNumber(raw)) {
+          const d = new Date(raw);
+          d.setUTCHours(0);
+          d.setUTCMinutes(0);
+          d.setUTCSeconds(0);
+          d.setUTCMilliseconds(0);
+          return d;
+        }
+        throw new Error(`'invalid value to parse (no date, no string, no number): ${raw}'`);
+      },
+      parseLiteral(ast) {
+        if (ast.kind === Kind.STRING || ast.kind === Kind.INT) {
+          return new Date(ast.value);
+        }
+        return null;
+      }
+    })
+  };
+
+  const typesMap = {
+    StartOfDay: {
+      serialize: (parsed: unknown): string | null =>
+        isSerializableDate(parsed) ? parsed.toISOString() : null,
+      parseValue: (raw: unknown): CustomDate | null => {
+        if (!raw) return null;
+        if (raw instanceof Date) return new CustomDate(raw);
+        if (isString(raw) || isNumber(raw)) {
+          const d = new Date(raw);
+          d.setUTCHours(0);
+          d.setUTCMinutes(0);
+          d.setUTCSeconds(0);
+          d.setUTCMilliseconds(0);
+          return new CustomDate(d);
+        }
+
+        throw new Error(`'invalid value to parse (no date, no string, no number): ${raw}'`);
+      }
+    }
+  };
+
+  const schema = makeExecutableSchema({
+    typeDefs,
+    resolvers
+  });
+
+  const querySource = `
+  query MyQuery {
+    object {
+      ...MyObjectFragment
+    }
+    sure {
+      ...MyObjectFragment
+      nested {
+        ...MyObjectFragment
+      }
+    }
+    list {
+      ...MyObjectFragment
+    }
+    listMaybe {
+      ...MyObjectFragment
+    }
+    sureList {
+      ...MyObjectFragment
+    }
+    reallySureList {
+      ...MyObjectFragment
+    }
+  }
+
+  fragment MyObjectFragment on MyObject {
+    __typename
+    day
+    morning
+    days
+    sureDays
+    mornings
+    myMornings: mornings
+    empty
+  }
+`;
+
+  const queryDocument: DocumentNode = gql`
+    ${querySource}
+  `;
+
+  const request = {
+    context: { client: dummyClient },
+    query: queryDocument,
+    variables: {}
+  };
+
+  const response = {
+    data: {
+      object: {
+        __typename: "MyObject",
+        day: rawDay,
+        morning: rawMorning,
+        days: [rawDay, rawDay2],
+        sureDays: [rawDay, rawDay2],
+        mornings: [rawMorning, rawMorning2],
+        myMornings: [rawMorning, rawMorning2],
+        empty: []
+      },
+      sure: {
+        __typename: "MyObject",
+        day: rawDay,
+        morning: rawMorning,
+        days: [rawDay, rawDay2],
+        sureDays: [rawDay, rawDay2],
+        mornings: [rawMorning, rawMorning2],
+        myMornings: [rawMorning, rawMorning2],
+        empty: [],
+        nested: {
+          __typename: "MyObject",
+          day: rawDay,
+          morning: rawMorning,
+          days: [rawDay, rawDay2],
+          sureDays: [rawDay, rawDay2],
+          mornings: [rawMorning, rawMorning2],
+          myMornings: [rawMorning, rawMorning2],
+          empty: []
+        }
+      },
+      list: [
+        {
+          __typename: "MyObject",
+          day: rawDay,
+          morning: rawMorning,
+          days: [rawDay, rawDay2],
+          sureDays: [rawDay, rawDay2],
+          mornings: [rawMorning, rawMorning2],
+          myMornings: [rawMorning, rawMorning2],
+          empty: []
+        }
+      ],
+      listMaybe: [
+        {
+          __typename: "MyObject",
+          day: rawDay,
+          morning: rawMorning,
+          days: [rawDay, rawDay2],
+          sureDays: [rawDay, rawDay2],
+          mornings: [rawMorning, rawMorning2],
+          myMornings: [rawMorning, rawMorning2],
+          empty: []
+        }
+      ],
+      sureList: [
+        {
+          __typename: "MyObject",
+          day: rawDay,
+          morning: rawMorning,
+          days: [rawDay, rawDay2],
+          sureDays: [rawDay, rawDay2],
+          mornings: [rawMorning, rawMorning2],
+          myMornings: [rawMorning, rawMorning2],
+          empty: []
+        }
+      ],
+      reallySureList: [
+        {
+          __typename: "MyObject",
+          day: rawDay,
+          morning: rawMorning,
+          days: [rawDay, rawDay2],
+          sureDays: [rawDay, rawDay2],
+          mornings: [rawMorning, rawMorning2],
+          myMornings: [rawMorning, rawMorning2],
+          empty: []
+        }
+      ]
+    }
+  };
+
+  it("can compare 2 custom dates ok", () => {
+    const a = new CustomDate(new Date("2018-01-01T00:00:00.000Z"));
+    const b = new CustomDate(new Date("2018-01-01T00:00:00.000Z"));
+    const c = new CustomDate(new Date("2018-02-03T00:00:00.000Z"));
+    expect(a).toEqual(b);
+    expect(a).not.toEqual(c);
+  });
+
+  it("ensure the response fixture is valid (ensure that in the response we have the RAW, the Server is converting from Date to STRING)", async () => {
+    expect.assertions(1);
+    const queryResponse = await graphql({ schema, source: querySource });
+    expect(queryResponse).toEqual(response);
+  });
+
+  it("use the scalar resolvers in the schema to parse back", async () => {
+    const link = ApolloLink.from([
+      withScalars({ schema }),
+      new ApolloLink(() => {
+        return observableOf(response);
+      })
+    ]);
+    const expectedResponse = {
+      data: {
+        object: {
+          __typename: "MyObject",
+          day: parsedDay,
+          morning: parsedMorning,
+          days: [parsedDay, parsedDay2],
+          sureDays: [parsedDay, parsedDay2],
+          mornings: [parsedMorning, parsedMorning2],
+          myMornings: [parsedMorning, parsedMorning2],
+          empty: []
+        },
+        sure: {
+          __typename: "MyObject",
+          day: parsedDay,
+          morning: parsedMorning,
+          days: [parsedDay, parsedDay2],
+          sureDays: [parsedDay, parsedDay2],
+          mornings: [parsedMorning, parsedMorning2],
+          myMornings: [parsedMorning, parsedMorning2],
+          empty: [],
+          nested: {
+            __typename: "MyObject",
+            day: parsedDay,
+            morning: parsedMorning,
+            days: [parsedDay, parsedDay2],
+            sureDays: [parsedDay, parsedDay2],
+            mornings: [parsedMorning, parsedMorning2],
+            myMornings: [parsedMorning, parsedMorning2],
+            empty: []
+          }
+        },
+        list: [
+          {
+            __typename: "MyObject",
+            day: parsedDay,
+            morning: parsedMorning,
+            days: [parsedDay, parsedDay2],
+            sureDays: [parsedDay, parsedDay2],
+            mornings: [parsedMorning, parsedMorning2],
+            myMornings: [parsedMorning, parsedMorning2],
+            empty: []
+          }
+        ],
+        listMaybe: [
+          {
+            __typename: "MyObject",
+            day: parsedDay,
+            morning: parsedMorning,
+            days: [parsedDay, parsedDay2],
+            sureDays: [parsedDay, parsedDay2],
+            mornings: [parsedMorning, parsedMorning2],
+            myMornings: [parsedMorning, parsedMorning2],
+            empty: []
+          }
+        ],
+        sureList: [
+          {
+            __typename: "MyObject",
+            day: parsedDay,
+            morning: parsedMorning,
+            days: [parsedDay, parsedDay2],
+            sureDays: [parsedDay, parsedDay2],
+            mornings: [parsedMorning, parsedMorning2],
+            myMornings: [parsedMorning, parsedMorning2],
+            empty: []
+          }
+        ],
+        reallySureList: [
+          {
+            __typename: "MyObject",
+            day: parsedDay,
+            morning: parsedMorning,
+            days: [parsedDay, parsedDay2],
+            sureDays: [parsedDay, parsedDay2],
+            mornings: [parsedMorning, parsedMorning2],
+            myMornings: [parsedMorning, parsedMorning2],
+            empty: []
+          }
+        ]
+      }
+    };
+
+    const observable = execute(link, request, { client: dummyClient });
+    const value = await nextValue(observable);
+    expect(value).toEqual(expectedResponse);
+    expect.assertions(1);
+  });
+
+  it("override the scala resolvers with the custom functions map", async () => {
+    const link = ApolloLink.from([
+      withScalars({ schema, typesMap }),
+      new ApolloLink(() => {
+        return observableOf(response);
+      })
+    ]);
+    const expectedResponse = {
+      data: {
+        object: {
+          __typename: "MyObject",
+          day: parsedDay,
+          morning: parsedMorningCustom,
+          days: [parsedDay, parsedDay2],
+          sureDays: [parsedDay, parsedDay2],
+          mornings: [parsedMorningCustom, parsedMorningCustom2],
+          myMornings: [parsedMorningCustom, parsedMorningCustom2],
+          empty: []
+        },
+        sure: {
+          __typename: "MyObject",
+          day: parsedDay,
+          morning: parsedMorningCustom,
+          days: [parsedDay, parsedDay2],
+          sureDays: [parsedDay, parsedDay2],
+          mornings: [parsedMorningCustom, parsedMorningCustom2],
+          myMornings: [parsedMorningCustom, parsedMorningCustom2],
+          empty: [],
+          nested: {
+            __typename: "MyObject",
+            day: parsedDay,
+            morning: parsedMorningCustom,
+            days: [parsedDay, parsedDay2],
+            sureDays: [parsedDay, parsedDay2],
+            mornings: [parsedMorningCustom, parsedMorningCustom2],
+            myMornings: [parsedMorningCustom, parsedMorningCustom2],
+            empty: []
+          }
+        },
+        list: [
+          {
+            __typename: "MyObject",
+            day: parsedDay,
+            morning: parsedMorningCustom,
+            days: [parsedDay, parsedDay2],
+            sureDays: [parsedDay, parsedDay2],
+            mornings: [parsedMorningCustom, parsedMorningCustom2],
+            myMornings: [parsedMorningCustom, parsedMorningCustom2],
+            empty: []
+          }
+        ],
+        listMaybe: [
+          {
+            __typename: "MyObject",
+            day: parsedDay,
+            morning: parsedMorningCustom,
+            days: [parsedDay, parsedDay2],
+            sureDays: [parsedDay, parsedDay2],
+            mornings: [parsedMorningCustom, parsedMorningCustom2],
+            myMornings: [parsedMorningCustom, parsedMorningCustom2],
+            empty: []
+          }
+        ],
+        sureList: [
+          {
+            __typename: "MyObject",
+            day: parsedDay,
+            morning: parsedMorningCustom,
+            days: [parsedDay, parsedDay2],
+            sureDays: [parsedDay, parsedDay2],
+            mornings: [parsedMorningCustom, parsedMorningCustom2],
+            myMornings: [parsedMorningCustom, parsedMorningCustom2],
+            empty: []
+          }
+        ],
+        reallySureList: [
+          {
+            __typename: "MyObject",
+            day: parsedDay,
+            morning: parsedMorningCustom,
+            days: [parsedDay, parsedDay2],
+            sureDays: [parsedDay, parsedDay2],
+            mornings: [parsedMorningCustom, parsedMorningCustom2],
+            myMornings: [parsedMorningCustom, parsedMorningCustom2],
+            empty: []
+          }
+        ]
+      }
+    };
+
+    const observable = execute(link, request, { client: dummyClient });
+    const value = await nextValue(observable);
+    expect(value).toEqual(expectedResponse);
+    expect.assertions(1);
+  });
+});
