@@ -4,6 +4,9 @@
   "description": "Custom Apollo Link for parsing and serializing custom scalars with Apollo Client v4",
   "author": "ENIAQ",
   "license": "MIT",
+  "engines": {
+    "node": ">=18.12.0"
+  },
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
